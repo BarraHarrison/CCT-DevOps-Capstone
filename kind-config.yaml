@@ -1,0 +1,20 @@
+# kind cluster config for the Book Catalog capstone.
+# Exposes ports 80/443 on localhost so the ingress-nginx controller
+# (installed separately) is reachable without extra port-forwarding.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 80
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 443
+        protocol: TCP
