@@ -42,3 +42,6 @@ Thumbs.db
 .coverage
 htmlcov/
 .pytest_cache/
+
+# GitHub Actions self-hosted runner (contains registration credentials/tokens)
+actions-runner/
