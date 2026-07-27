@@ -1,0 +1,51 @@
+# Default values for the bookcatalog chart.
+
+replicaCount: 2
+
+image:
+  repository: ghcr.io/barraharrison/cct-devops-capstone
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8000
+
+ingress:
+  enabled: true
+  className: nginx
+  host: bookcatalog.local
+  path: /
+  annotations: {}
+
+# Non-secret application configuration (rendered into a ConfigMap).
+django:
+  debug: "False"
+  allowedHosts: "bookcatalog.local,localhost,127.0.0.1"
+
+# Sensitive values (rendered into a Secret). Override these at install time,
+# e.g. `helm install ... --set django.secretKey=... --set postgres.password=...`
+# — do not commit real secrets to values.yaml.
+secrets:
+  djangoSecretKey: "dev-secret-key-change-me"
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# Bundled PostgreSQL, deployed as part of this same chart so the app is
+# fully self-contained for local/demo Kubernetes deployments. In a real
+# production setup this would typically be an external managed database
+# instead, referenced only via the Secret/ConfigMap.
+postgres:
+  enabled: true
+  image: postgres:16-alpine
+  database: bookcatalog
+  user: bookcatalog
+  password: bookcatalog
+  storage: 1Gi

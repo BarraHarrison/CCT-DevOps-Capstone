@@ -1,0 +1,18 @@
+Book Catalog API has been deployed.
+
+{{- if .Values.ingress.enabled }}
+
+Add this to your /etc/hosts if using a local cluster (kind/minikube):
+  <ingress-controller-IP>  {{ .Values.ingress.host }}
+
+Then visit:
+  http://{{ .Values.ingress.host }}{{ .Values.ingress.path }}api/books/
+{{- else }}
+
+Ingress is disabled. Access the app with:
+  kubectl port-forward svc/{{ include "bookcatalog.fullname" . }} 8000:{{ .Values.service.port }}
+  curl http://localhost:8000/api/books/
+{{- end }}
+
+Check pod status with:
+  kubectl get pods -l app.kubernetes.io/instance={{ .Release.Name }}
