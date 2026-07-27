@@ -1,0 +1,41 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-bookcatalog}
+      POSTGRES_USER: ${DB_USER:-bookcatalog}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-bookcatalog}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-bookcatalog}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-secret-key-change-me}
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-True}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1}
+      DB_ENGINE: postgres
+      DB_NAME: ${DB_NAME:-bookcatalog}
+      DB_USER: ${DB_USER:-bookcatalog}
+      DB_PASSWORD: ${DB_PASSWORD:-bookcatalog}
+      DB_HOST: db
+      DB_PORT: 5432
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+
+volumes:
+  postgres_data:
