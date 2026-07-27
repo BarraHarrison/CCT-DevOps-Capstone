@@ -43,12 +43,22 @@ spec:
             httpGet:
               path: /api/books/
               port: http
+              # kubelet's httpGet probe connects directly to the pod IP and
+              # sends that IP as the Host header. Django's ALLOWED_HOSTS
+              # would reject that (400), so we force a Host header that
+              # matches an allowed host instead of loosening ALLOWED_HOSTS.
+              httpHeaders:
+                - name: Host
+                  value: {{ .Values.ingress.host }}
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
             httpGet:
               path: /api/books/
               port: http
+              httpHeaders:
+                - name: Host
+                  value: {{ .Values.ingress.host }}
             initialDelaySeconds: 15
             periodSeconds: 20
           resources:
