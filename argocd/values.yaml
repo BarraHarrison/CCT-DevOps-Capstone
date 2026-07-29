@@ -1,0 +1,19 @@
+# Values for installing ArgoCD itself via the argo/argo-cd Helm chart.
+# Configured to run "insecurely" (no TLS) since this is a local kind cluster
+# with no certificate, and exposed under the /argocd path on the existing
+# nginx ingress controller (the same one used by the bookcatalog app).
+server:
+  ingress:
+    enabled: true
+    path: /argocd
+    annotations:
+      ingress.kubernetes.io/ssl-redirect: "false"
+
+configs:
+  params:
+    server.insecure: true
+    server.basehref: /argocd
+    server.rootpath: '/argocd'
+
+global:
+  domain: ""
