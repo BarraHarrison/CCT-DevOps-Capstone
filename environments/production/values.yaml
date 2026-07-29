@@ -1,0 +1,10 @@
+# Production overlay for the bookcatalog Helm chart, used by ArgoCD as the
+# "values files" override when syncing chart/bookcatalog/.
+#
+# The image.tag below is kept in sync automatically by the "deploy-application"
+# job in .github/workflows/ci-cd.yml, which writes the just-built image's
+# commit-SHA tag here after every successful push to main. ArgoCD watches this
+# file and re-syncs the cluster automatically whenever it changes — this file
+# should not normally need to be edited by hand.
+image:
+  tag: "latest"
