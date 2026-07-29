@@ -65,48 +65,30 @@ jobs:
             ${{ env.IMAGE_NAME }}:latest
             ${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-  deploy:
-    name: Deploy to local Kubernetes (kind) via Helm
+  deploy-application:
+    name: Update image tag for ArgoCD (GitOps deploy)
     needs: build-and-push
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Lowercase image name
-        run: echo "IMAGE_NAME=$(echo ghcr.io/${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
-
-      - name: Deploy with Helm
-        run: |
-          helm upgrade --install bookcatalog ./chart/bookcatalog \
-            --set image.repository=${{ env.IMAGE_NAME }} \
-            --set image.tag=${{ needs.build-and-push.outputs.image_tag }} \
-            --wait --timeout 3m
-
-      - name: Verify rollout
-        run: kubectl rollout status deployment/bookcatalog --timeout=120s
-
-      - name: Smoke test the API
-        run: |
-          kubectl port-forward svc/bookcatalog 8000:80 &
-          PF_PID=$!
-          trap "kill $PF_PID 2>/dev/null || true" EXIT
-
-          success=false
-          for i in $(seq 1 10); do
-            sleep 3
-            if curl -sf http://localhost:8000/api/books/; then
-              echo ""
-              echo "Smoke test passed on attempt $i"
-              success=true
-              break
-            fi
-            echo "Attempt $i failed, retrying..."
-          done
-
-          if [ "$success" != "true" ]; then
-            echo "Smoke test failed after retries"
-            kubectl get pods -l app.kubernetes.io/instance=bookcatalog
-            exit 1
-          fi
+      # ArgoCD continuously watches this repository and auto-syncs the
+      # cluster whenever chart/bookcatalog/ or environments/production/values.yaml
+      # change. So "deploying" now just means updating the image tag here —
+      # ArgoCD (running inside the kind cluster) picks up the change and
+      # rolls it out itself. No cluster access or self-hosted runner needed
+      # for this step, unlike the old direct `helm upgrade --install` job.
+      - name: Update image tag in values.yaml
+        uses: fjogeleit/yaml-update-action@main
+        with:
+          valueFile: 'environments/production/values.yaml'
+          propertyPath: 'image.tag'
+          value: ${{ needs.build-and-push.outputs.image_tag }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: main
+          commitChange: true
+          message: 'chore: deploy image ${{ needs.build-and-push.outputs.image_tag }} [skip ci]'
