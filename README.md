@@ -20,7 +20,8 @@ The API manages a catalog of books with full CRUD support. Each book stores:
 | Containerization | Docker + docker-compose |
 | Orchestration | Kubernetes (kind, locally) |
 | Packaging | Helm chart |
-| CI/CD | GitHub Actions (self-hosted runner) |
+| Deployment model | GitOps via ArgoCD |
+| CI/CD | GitHub Actions |
 | Registry | GitHub Container Registry (GHCR) |
 
 ## API usage examples
@@ -114,9 +115,9 @@ Defined in [`.github/workflows/ci-cd.yml`](.github/workflows/ci-cd.yml), trigger
 
 1. **`test`** — runs on a GitHub-hosted runner. Installs dependencies from `requirements.txt` and runs the full Django test suite against an in-memory SQLite database.
 2. **`build-and-push`** — runs only on pushes to `main`, after tests pass. Builds the Docker image from the `Dockerfile` and pushes it to GitHub Container Registry, tagged both `:latest` and with the commit SHA.
-3. **`deploy`** — runs on a **self-hosted runner** (the developer's own machine), since the target Kubernetes cluster is a local `kind` cluster rather than a cloud cluster reachable from GitHub-hosted runners. It runs `helm upgrade --install` against the local cluster using the freshly-built image, waits for the rollout to complete, then runs a smoke test that curls the live API through the Service.
+3. **`deploy-application`** — runs only on pushes to `main`, after the image is pushed. Updates `image.tag` in [`environments/production/values.yaml`](environments/production/values.yaml) to the new commit SHA using [`fjogeleit/yaml-update-action`](https://github.com/fjogeleit/yaml-update-action), and commits that change back to `main` with `[skip ci]` (so it doesn't re-trigger the pipeline).
 
-**Why a self-hosted runner?** The Kubernetes cluster used for this project is local (`kind`, running in Docker on the developer's Mac) rather than a managed cloud cluster, so only a runner with network access to that cluster can deploy to it. The workflow only runs the `deploy` job on direct pushes to `main` (never on `pull_request` events), which keeps the self-hosted runner safe from the security risk of forks running arbitrary code on it via PRs.
+**Deployment is GitOps-driven, not push-driven.** Earlier in this project, the pipeline deployed directly by running `helm upgrade --install` from a self-hosted GitHub Actions runner (since the target `kind` cluster is local and unreachable from GitHub-hosted runners). This has been replaced with [ArgoCD](#argocd-gitops-deployment), which runs *inside* the cluster and continuously watches this repository. Now the pipeline's only job is to update the image tag in Git — ArgoCD detects that change and deploys it automatically. This means the `deploy-application` job runs on a normal GitHub-hosted runner, and no self-hosted runner or direct cluster access from CI is required at all.
 
 **Why GHCR over Docker Hub?** GHCR integrates directly with GitHub's built-in `GITHUB_TOKEN` for authentication — no extra secrets to manage — and packages pushed from a public repository are public by default, which simplifies the cluster's image pulls.
 
@@ -149,7 +150,9 @@ kubectl wait --namespace ingress-nginx --for=condition=ready pod --selector=app.
 echo "127.0.0.1 bookcatalog.local" | sudo tee -a /etc/hosts
 ```
 
-### 4. Deploy with Helm
+### 4. Deploy the application
+
+In normal day-to-day use, you **don't** run `helm install`/`helm upgrade` manually — [ArgoCD](#argocd-gitops-deployment) (set up below) watches this repository and deploys automatically whenever `chart/bookcatalog/` or `environments/production/values.yaml` changes. The commands below are only needed to bootstrap the app once, before ArgoCD exists yet, or for local debugging outside the GitOps flow:
 
 ```bash
 helm install bookcatalog ./chart/bookcatalog
@@ -174,14 +177,63 @@ helm lint ./chart/bookcatalog
 helm template ./chart/bookcatalog
 ```
 
+## ArgoCD (GitOps deployment)
+
+ArgoCD runs inside the same `kind` cluster and continuously syncs the cluster's state to match this repository — pushing a change to `main` is enough to deploy it, with no CI job needing direct cluster access.
+
+### 1. Install ArgoCD
+
+```bash
+helm repo add argo https://argoproj.github.io/argo-helm
+helm repo update
+kubectl create namespace argocd
+helm -n argocd install argocd argo/argo-cd -f ./argocd/values.yaml
+```
+
+`argocd/values.yaml` configures ArgoCD to run without TLS (no certificate available locally) and exposes its UI under `/argocd` on the same NGINX ingress controller already used by the app.
+
+### 2. Log in
+
+```bash
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+```
+
+Visit `http://bookcatalog.local/argocd` (or `http://localhost/argocd`), and log in as `admin` with that password.
+
+### 3. Connect this repository
+
+In ArgoCD: **Settings → Repositories → Connect Repo → VIA HTTPS**, and provide a GitHub [fine-grained personal access token](https://github.com/settings/tokens?type=beta) (Contents: Read-only, scoped to just this repository) as the password.
+
+### 4. Create the Application
+
+**Settings → Applications → New App**, with:
+- **General:** name `bookcatalog`, project `default`, sync policy **Automatic** (with Prune + Self Heal enabled)
+- **Source:** this repository, revision `main`, path `chart/bookcatalog`
+- **Destination:** the same (in-cluster) destination, namespace `default`
+- **Helm → Values Files:** `../../environments/production/values.yaml`
+
+That last path is relative to the chart directory (`chart/bookcatalog`), not the repo root — two levels up (`../../`) to reach the repo root, then into `environments/production/values.yaml`. Getting this wrong (e.g. leaving it as the default `values.yaml`) silently makes ArgoCD use the chart's own default values instead of the production overlay, with no visible error — worth double-checking directly against the live Application object if the deployed image tag doesn't match what's expected:
+
+```bash
+kubectl -n argocd get application bookcatalog -o jsonpath='{.spec.source.helm.valueFiles}'
+```
+
+### How a deploy actually happens
+
+1. A push to `main` triggers the CI/CD pipeline (test → build & push image → update `environments/production/values.yaml` with the new image tag, committed by `github-actions[bot]`).
+2. ArgoCD detects the new commit on its own (polling this repo) and starts a sync.
+3. ArgoCD renders the Helm chart with the updated `values.yaml` and applies it to the cluster — new pods roll out with the new image, automatically.
+
 ## Project structure
 
 ```
 CCT-DevOps-Capstone/
-├── bookcatalog/            # Django project settings, root URLs
-├── books/                  # Django app: model, serializer, views, tests
-├── chart/bookcatalog/      # Helm chart
-├── .github/workflows/      # CI/CD pipeline
+├── bookcatalog/                        # Django project settings, root URLs
+├── books/                              # Django app: model, serializer, views, tests
+├── chart/bookcatalog/                  # Helm chart
+├── argocd/values.yaml                  # ArgoCD's own Helm install values
+├── environments/production/values.yaml # Image tag override ArgoCD deploys from
+├── .github/workflows/                  # CI/CD pipeline
 ├── Dockerfile
 ├── docker-compose.yml
 ├── kind-config.yaml
