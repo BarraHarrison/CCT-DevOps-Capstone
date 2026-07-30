@@ -206,7 +206,7 @@ In ArgoCD: **Settings → Repositories → Connect Repo → VIA HTTPS**, and pro
 
 ### 4. Create the Application
 
-**Settings → Applications → New App**, with:
+**Applications → New App**, with:
 - **General:** name `bookcatalog`, project `default`, sync policy **Automatic** (with Prune + Self Heal enabled)
 - **Source:** this repository, revision `main`, path `chart/bookcatalog`
 - **Destination:** the same (in-cluster) destination, namespace `default`
